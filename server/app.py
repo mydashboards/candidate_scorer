@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, ValidationError
 
-app = FastAPI(title="Alex Candidate Scorer", version="1.0.0")
+app = FastAPI(title="Alex Candidate Scorer", version="1.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -56,101 +56,54 @@ STATUS_MULTIPLIER = {
     "unknown": 0.0,
 }
 
-SYSTEM_PROMPT = """You are an evidence-based sourcing assistant. Decide whether the visible LinkedIn profile is worth outreach for a Senior C++ Software Engineer role at EGYM.
-
+SYSTEM_PROMPT = """You are an evidence-based sourcing assistant for a Senior C++ Software Engineer role at EGYM.
 Use only explicit profile evidence.
 
-GOAL
-A strong C++ engineer with application-layer, software-architecture, or business-logic depth should move forward even if Qt/QML or CMake are missing.
+CORE REQUIREMENTS
+1) C++ EXPERIENCE
+Target: about 3-5+ years substantial hands-on C++ in regular professional software-engineering roles.
 
-HARD REQUIREMENTS
+IMPORTANT EXPERIENCE RULE:
+Do NOT count internships, working-student / Werkstudent roles, student jobs, thesis work, university projects, student research, or similar student experience toward the required 3-5 years.
+They may provide skill evidence, but contribute 0 years to professional experience duration.
+Count only regular professional employment such as full-time/part-time Software Engineer, Developer, Senior Engineer, etc.
 
-1. C++ EXPERIENCE
-Target: approximately 3-5+ years of substantial hands-on C++ software engineering.
+MET: about 3+ qualifying professional years, multiple substantial regular C++ roles, or clearly deep/current senior C++ experience with sufficient professional duration.
+PARTIAL: about 1-3 qualifying professional years, C++ secondary, old, or duration unclear.
+NOT_MET: no meaningful qualifying professional C++ experience.
 
-MET:
-- approximately 3+ years of hands-on C++
-- OR multiple substantial C++ roles
-- OR clear senior-level / deep modern C++ expertise
-
-PARTIAL:
-- approximately 1-3 years of C++
-- C++ is only secondary
-- duration or depth is unclear
-- C++ experience is old
-
-NOT_MET:
-- no meaningful hands-on C++ evidence
-
-2. HIGH-LEVEL / APPLICATION DEVELOPMENT
-The candidate should primarily work above the low-level hardware/control layer.
-
-Strong evidence includes:
-- application development
-- application layer
-- business logic
-- desktop software
-- GUI applications
-- complex product software
-- software architecture
-- domain logic
-- feature development
-- design patterns
-- domain-driven design
-
-MET:
-- clear hands-on application-layer or business-logic-heavy software development
-
-PARTIAL:
-- mixed high-level and low-level work
-- weak but relevant application/architecture evidence
+2) HIGH-LEVEL / APPLICATION DEVELOPMENT
+Strong evidence: application development, business/domain logic, desktop/GUI/product software, software architecture, feature development, design patterns, DDD.
+MET: clear hands-on application/business-logic-heavy development.
+PARTIAL: mixed low/high-level work or weak application evidence.
 
 HARD SKIP
-Skip profiles that are predominantly focused on:
-- ECU development
-- device controller development
-- microcontroller-centric development
-- low-level hardware control
-- AUTOSAR ECU work
-- BSP / driver-heavy work
-- firmware-only work
+Skip when the main profile is ECU, device-controller, microcontroller, AUTOSAR ECU, BSP/driver-heavy, low-level hardware control or firmware-only work AND there is no strong application/business-logic depth.
+Do not skip merely for having some embedded experience.
 
-Do NOT hard-skip someone merely because they have embedded experience.
-Only hard-skip if low-level ECU/device-controller/firmware work is the main professional profile and there is no strong application/business-logic depth.
+NICE TO HAVE ONLY
+Qt/QML and CMake. Missing them is not a reason to skip a strong C++ application candidate.
 
-NICE TO HAVE
-- Qt / QML
-- CMake
+DECISIONS
+Strong C++ + strong application/business logic => OUTREACH / STRONG OUTREACH.
+Strong C++ + unclear application layer => REVIEW.
+Predominantly ECU/device-controller/firmware => SKIP.
+Weak qualifying C++ => SKIP or REVIEW.
 
-These are bonuses only. Do not significantly downgrade a strong C++ application-layer candidate because Qt/QML or CMake are missing.
+Missing info = unknown. Use partial when evidence is relevant but insufficient.
+Ignore protected/personal characteristics. Do not assess culture fit.
+Keep evidence very short and factual. Summary under 25 words.
 
-DECISION PRINCIPLES
-- Strong C++ + strong application/business-logic depth => OUTREACH or STRONG OUTREACH
-- Strong C++ + unclear application layer => REVIEW
-- Strong C++ + predominantly ECU/device-controller/firmware => SKIP
-- Weak C++ => SKIP or REVIEW depending on evidence
-- Missing Qt/QML => not a reason to skip
-- Missing CMake => not a reason to skip
-
-GENERAL
-Missing information = unknown.
-Use partial for relevant but insufficient evidence.
-Do not infer skills from company names alone.
-Ignore protected and personal characteristics.
-Do not assess personality or culture fit.
-Keep evidence concise and factual.
-Keep the summary under 35 words.
-
-Return JSON with exactly these fields:
+Return JSON only:
 {
-  "summary": "short explanation",
-  "hard_skip": false,
-  "hard_skip_reason": "",
-  "criteria": [
-    {"key": "cpp_depth", "status": "met|partial|not_met|unknown", "evidence": "..."},
-    {"key": "application_layer", "status": "met|partial|not_met|unknown", "evidence": "..."},
-    {"key": "qt_qml", "status": "met|partial|not_met|unknown", "evidence": "..."},
-    {"key": "cmake", "status": "met|partial|not_met|unknown", "evidence": "..."}
+  "summary":"...",
+  "hard_skip":false,
+  "hard_skip_reason":"",
+  "criteria":[
+    {"key":"cpp_depth","status":"met|partial|not_met|unknown","evidence":"..."},
+    {"key":"application_layer","status":"met|partial|not_met|unknown","evidence":"..."},
+    {"key":"qt_qml","status":"met|partial|not_met|unknown","evidence":"..."},
+    {"key":"cmake","status":"met|partial|not_met|unknown","evidence":"..."}
   ]
 }
 """
@@ -179,15 +132,14 @@ def _normalise_result(payload: dict) -> ScoreResult:
 
         max_points = definition["max_points"]
         points = round(max_points * STATUS_MULTIPLIER[status])
-        evidence = str(raw.get("evidence", "")).strip() or "Not visible in the loaded profile."
-
+        evidence = str(raw.get("evidence", "")).strip() or "Not visible in profile."
         criteria.append(Criterion(
             key=definition["key"],
             label=definition["label"],
             status=status,
             points=points,
             max_points=max_points,
-            evidence=evidence[:260],
+            evidence=evidence[:180],
         ))
 
     by_key = {item.key: item for item in criteria}
@@ -196,7 +148,7 @@ def _normalise_result(payload: dict) -> ScoreResult:
     if payload.get("hard_skip") is True:
         decision = "SKIP"
         score = min(score, 49)
-        summary = str(payload.get("hard_skip_reason", "")).strip() or "Skip: predominantly low-level ECU/device-controller/firmware profile."
+        summary = str(payload.get("hard_skip_reason", "")).strip() or "Predominantly low-level ECU/device-controller/firmware profile."
     else:
         if by_key["cpp_depth"].status == "not_met":
             score = min(score, 39)
@@ -217,14 +169,9 @@ def _normalise_result(payload: dict) -> ScoreResult:
         else:
             decision = "SKIP"
 
-        summary = str(payload.get("summary", "")).strip() or "Assessment based on the currently loaded LinkedIn profile."
+        summary = str(payload.get("summary", "")).strip() or "Assessment based on the loaded LinkedIn profile."
 
-    return ScoreResult(
-        score=score,
-        decision=decision,
-        summary=summary[:260],
-        criteria=criteria,
-    )
+    return ScoreResult(score=score, decision=decision, summary=summary[:200], criteria=criteria)
 
 
 @app.get("/health")
@@ -235,9 +182,8 @@ def health():
 @app.post("/analyze", response_model=ScoreResult)
 def analyze(profile: Profile):
     user_prompt = (
-        "Evaluate this candidate profile. Ignore LinkedIn navigation, messages, recommendations, "
-        "and unrelated interface text.\n\n"
-        f"VISIBLE PROFILE TEXT:\n{profile.visibleProfileText}"
+        "Evaluate this LinkedIn candidate profile. Ignore navigation, messages, recommendations and unrelated UI text.\n\n"
+        f"PROFILE:\n{profile.visibleProfileText}"
     )
 
     request_body = {
@@ -252,13 +198,13 @@ def analyze(profile: Profile):
         ],
         "options": {
             "temperature": 0,
-            "num_ctx": 4096,
-            "num_predict": 420,
+            "num_ctx": 3072,
+            "num_predict": 300,
         },
     }
 
     try:
-        with httpx.Client(timeout=120.0) as client:
+        with httpx.Client(timeout=90.0) as client:
             response = client.post(OLLAMA_URL, json=request_body)
             response.raise_for_status()
 
