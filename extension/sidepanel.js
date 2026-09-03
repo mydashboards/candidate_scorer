@@ -6,6 +6,10 @@ const decisionEl = document.getElementById("decision");
 const summaryEl = document.getElementById("summary");
 const criteriaEl = document.getElementById("criteria");
 
+let lastProfileUrl = null;
+let analyzingUrl = null;
+let debounceTimer = null;
+
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
@@ -15,10 +19,7 @@ async function extractFromTab(tabId) {
   try {
     return await chrome.tabs.sendMessage(tabId, { type: "EXTRACT_PROFILE" });
   } catch (_) {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ["content.js"]
-    });
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
     return await chrome.tabs.sendMessage(tabId, { type: "EXTRACT_PROFILE" });
   }
 }
@@ -45,20 +46,23 @@ function render(data) {
   resultEl.classList.remove("hidden");
 }
 
-analyzeBtn.addEventListener("click", async () => {
-  resultEl.classList.add("hidden");
-  statusEl.textContent = "Analyzing...";
-
+async function analyzeCurrentProfile(force = false) {
   try {
     const tab = await getActiveTab();
-    if (!tab?.id || !tab.url?.includes("linkedin.com")) {
-      throw new Error("Open a LinkedIn profile first.");
-    }
+    if (!tab?.id || !tab.url?.includes("linkedin.com")) return;
+
+    const url = tab.url.split("?")[0];
+    if (!force && (url === lastProfileUrl || url === analyzingUrl)) return;
+
+    analyzingUrl = url;
+    resultEl.classList.add("hidden");
+    statusEl.textContent = "Analyzing automatically...";
+
+    // Small delay lets LinkedIn finish swapping SPA profile content.
+    await new Promise(resolve => setTimeout(resolve, 450));
 
     const extracted = await extractFromTab(tab.id);
-    if (!extracted?.ok) {
-      throw new Error(extracted?.error || "Could not read profile.");
-    }
+    if (!extracted?.ok) throw new Error(extracted?.error || "Could not read profile.");
 
     const response = await fetch("http://127.0.0.1:3847/analyze", {
       method: "POST",
@@ -66,15 +70,51 @@ analyzeBtn.addEventListener("click", async () => {
       body: JSON.stringify(extracted.profile)
     });
 
-    if (!response.ok) {
-      const err = await response.text();
-      throw new Error(err);
-    }
+    if (!response.ok) throw new Error(await response.text());
 
     const data = await response.json();
+
+    // Ignore a late response if the user already moved to another profile.
+    const currentTab = await getActiveTab();
+    const currentUrl = currentTab?.url?.split("?")[0];
+    if (currentUrl !== url) {
+      analyzingUrl = null;
+      scheduleAutoAnalyze(100);
+      return;
+    }
+
     render(data);
-    statusEl.textContent = "Done.";
+    lastProfileUrl = url;
+    analyzingUrl = null;
+    statusEl.textContent = "Done — next profile will analyze automatically.";
   } catch (error) {
+    analyzingUrl = null;
     statusEl.textContent = `Error: ${error.message}`;
   }
+}
+
+function scheduleAutoAnalyze(delay = 250) {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => analyzeCurrentProfile(false), delay);
+}
+
+analyzeBtn.textContent = "Refresh";
+analyzeBtn.addEventListener("click", () => analyzeCurrentProfile(true));
+
+chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
+  if (tab.active && (changeInfo.url || changeInfo.status === "complete")) {
+    scheduleAutoAnalyze(changeInfo.url ? 300 : 100);
+  }
 });
+
+chrome.tabs.onActivated.addListener(() => scheduleAutoAnalyze(150));
+
+// LinkedIn Recruiter is an SPA; polling catches profile swaps that do not fire a full reload.
+setInterval(async () => {
+  const tab = await getActiveTab();
+  if (!tab?.url?.includes("linkedin.com")) return;
+  const url = tab.url.split("?")[0];
+  if (url !== lastProfileUrl && url !== analyzingUrl) scheduleAutoAnalyze(100);
+}, 500);
+
+scheduleAutoAnalyze(150);
