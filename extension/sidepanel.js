@@ -8,6 +8,7 @@ const criteriaEl = document.getElementById("criteria");
 
 let lastProfileUrl = null;
 let analyzingUrl = null;
+let failedProfileUrl = null;
 let debounceTimer = null;
 
 async function getActiveTab() {
@@ -29,52 +30,35 @@ function render(data) {
   decisionEl.textContent = data.decision;
   summaryEl.textContent = data.summary;
   criteriaEl.innerHTML = "";
-
   for (const item of data.criteria) {
     const row = document.createElement("div");
     row.className = "criterion";
-    row.innerHTML = `
-      <div class="criterionTop">
-        <span>${item.label}</span>
-        <span>${item.points}/${item.max_points}</span>
-      </div>
-      <div class="evidence">${item.status.toUpperCase()} — ${item.evidence}</div>
-    `;
+    row.innerHTML = `<div class="criterionTop"><span>${item.label}</span><span>${item.points}/${item.max_points}</span></div><div class="evidence">${item.status.toUpperCase()} — ${item.evidence}</div>`;
     criteriaEl.appendChild(row);
   }
-
   resultEl.classList.remove("hidden");
 }
 
 async function analyzeCurrentProfile(force = false) {
+  let url = null;
   try {
     const tab = await getActiveTab();
     if (!tab?.id || !tab.url?.includes("linkedin.com")) return;
+    url = tab.url.split("?")[0];
+    if (!force && (url === lastProfileUrl || url === analyzingUrl || url === failedProfileUrl)) return;
 
-    const url = tab.url.split("?")[0];
-    if (!force && (url === lastProfileUrl || url === analyzingUrl)) return;
-
+    if (force) failedProfileUrl = null;
     analyzingUrl = url;
     resultEl.classList.add("hidden");
-    statusEl.textContent = "Analyzing automatically...";
-
-    // Small delay lets LinkedIn finish swapping SPA profile content.
+    statusEl.textContent = "Analyzing...";
     await new Promise(resolve => setTimeout(resolve, 450));
 
     const extracted = await extractFromTab(tab.id);
     if (!extracted?.ok) throw new Error(extracted?.error || "Could not read profile.");
-
-    const response = await fetch("http://127.0.0.1:3847/analyze", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(extracted.profile)
-    });
-
+    const response = await fetch("http://127.0.0.1:3847/analyze", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(extracted.profile)});
     if (!response.ok) throw new Error(await response.text());
-
     const data = await response.json();
 
-    // Ignore a late response if the user already moved to another profile.
     const currentTab = await getActiveTab();
     const currentUrl = currentTab?.url?.split("?")[0];
     if (currentUrl !== url) {
@@ -85,11 +69,13 @@ async function analyzeCurrentProfile(force = false) {
 
     render(data);
     lastProfileUrl = url;
+    failedProfileUrl = null;
     analyzingUrl = null;
     statusEl.textContent = "Done — next profile will analyze automatically.";
   } catch (error) {
     analyzingUrl = null;
-    statusEl.textContent = `Error: ${error.message}`;
+    failedProfileUrl = url;
+    statusEl.textContent = `Error: ${error.message}\n\nAuto-retry stopped. Click Refresh to retry.`;
   }
 }
 
@@ -100,21 +86,12 @@ function scheduleAutoAnalyze(delay = 250) {
 
 analyzeBtn.textContent = "Refresh";
 analyzeBtn.addEventListener("click", () => analyzeCurrentProfile(true));
-
-chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
-  if (tab.active && (changeInfo.url || changeInfo.status === "complete")) {
-    scheduleAutoAnalyze(changeInfo.url ? 300 : 100);
-  }
-});
-
+chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => { if (tab.active && (changeInfo.url || changeInfo.status === "complete")) scheduleAutoAnalyze(changeInfo.url ? 300 : 100); });
 chrome.tabs.onActivated.addListener(() => scheduleAutoAnalyze(150));
-
-// LinkedIn Recruiter is an SPA; polling catches profile swaps that do not fire a full reload.
 setInterval(async () => {
   const tab = await getActiveTab();
   if (!tab?.url?.includes("linkedin.com")) return;
   const url = tab.url.split("?")[0];
-  if (url !== lastProfileUrl && url !== analyzingUrl) scheduleAutoAnalyze(100);
+  if (url !== lastProfileUrl && url !== analyzingUrl && url !== failedProfileUrl) scheduleAutoAnalyze(100);
 }, 500);
-
 scheduleAutoAnalyze(150);
