@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Alex Candidate Scorer",
+  "version": "1.0.0",
+  "description": "Fast local LinkedIn candidate scoring with Ollama.",
+  "permissions": ["sidePanel", "activeTab", "scripting"],
+  "host_permissions": [
+    "https://www.linkedin.com/*",
+    "http://127.0.0.1:3847/*",
+    "http://localhost:3847/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Alex Candidate Scorer"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.linkedin.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
