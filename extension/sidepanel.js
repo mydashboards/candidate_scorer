@@ -8,13 +8,8 @@ const criteriaEl = document.getElementById("criteria");
 
 let lastProfileUrl = null;
 let analyzingUrl = null;
+let failedProfileUrl = null;
 let debounceTimer = null;
-let autoPausedAfterError = false;
-let requestToken = 0;
-
-function normalizeUrl(url) {
-  return (url || "").split("#")[0].split("?")[0];
-}
 
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -45,17 +40,14 @@ function render(data) {
 }
 
 async function analyzeCurrentProfile(force = false) {
-  if (autoPausedAfterError && !force) return;
-
-  const myToken = ++requestToken;
   let url = null;
   try {
     const tab = await getActiveTab();
     if (!tab?.id || !tab.url?.includes("linkedin.com")) return;
-    url = normalizeUrl(tab.url);
-    if (!force && (url === lastProfileUrl || url === analyzingUrl)) return;
+    url = tab.url.split("?")[0];
+    if (!force && (url === lastProfileUrl || url === analyzingUrl || url === failedProfileUrl)) return;
 
-    if (force) autoPausedAfterError = false;
+    if (force) failedProfileUrl = null;
     analyzingUrl = url;
     resultEl.classList.add("hidden");
     statusEl.textContent = "Analyzing...";
@@ -63,19 +55,12 @@ async function analyzeCurrentProfile(force = false) {
 
     const extracted = await extractFromTab(tab.id);
     if (!extracted?.ok) throw new Error(extracted?.error || "Could not read profile.");
-
-    const response = await fetch("http://127.0.0.1:3847/analyze", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(extracted.profile)
-    });
+    const response = await fetch("http://127.0.0.1:3847/analyze", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(extracted.profile)});
     if (!response.ok) throw new Error(await response.text());
     const data = await response.json();
 
-    if (myToken !== requestToken) return;
-
     const currentTab = await getActiveTab();
-    const currentUrl = normalizeUrl(currentTab?.url);
+    const currentUrl = currentTab?.url?.split("?")[0];
     if (currentUrl !== url) {
       analyzingUrl = null;
       scheduleAutoAnalyze(100);
@@ -84,42 +69,29 @@ async function analyzeCurrentProfile(force = false) {
 
     render(data);
     lastProfileUrl = url;
+    failedProfileUrl = null;
     analyzingUrl = null;
     statusEl.textContent = "Done — next profile will analyze automatically.";
   } catch (error) {
-    if (myToken !== requestToken) return;
     analyzingUrl = null;
-    autoPausedAfterError = true;
-    clearTimeout(debounceTimer);
-    statusEl.textContent = `Error: ${error.message}\n\nAUTO ANALYZE PAUSED. The error will stay here. Click Refresh only when you want to retry.`;
+    failedProfileUrl = url;
+    statusEl.textContent = `Error: ${error.message}\n\nAuto-retry stopped. Click Refresh to retry.`;
   }
 }
 
 function scheduleAutoAnalyze(delay = 250) {
-  if (autoPausedAfterError) return;
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => analyzeCurrentProfile(false), delay);
 }
 
 analyzeBtn.textContent = "Refresh";
 analyzeBtn.addEventListener("click", () => analyzeCurrentProfile(true));
-
-chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
-  if (!autoPausedAfterError && tab.active && (changeInfo.url || changeInfo.status === "complete")) {
-    scheduleAutoAnalyze(changeInfo.url ? 300 : 100);
-  }
-});
-
-chrome.tabs.onActivated.addListener(() => {
-  if (!autoPausedAfterError) scheduleAutoAnalyze(150);
-});
-
+chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => { if (tab.active && (changeInfo.url || changeInfo.status === "complete")) scheduleAutoAnalyze(changeInfo.url ? 300 : 100); });
+chrome.tabs.onActivated.addListener(() => scheduleAutoAnalyze(150));
 setInterval(async () => {
-  if (autoPausedAfterError) return;
   const tab = await getActiveTab();
   if (!tab?.url?.includes("linkedin.com")) return;
-  const url = normalizeUrl(tab.url);
-  if (url !== lastProfileUrl && url !== analyzingUrl) scheduleAutoAnalyze(100);
+  const url = tab.url.split("?")[0];
+  if (url !== lastProfileUrl && url !== analyzingUrl && url !== failedProfileUrl) scheduleAutoAnalyze(100);
 }, 500);
-
 scheduleAutoAnalyze(150);
