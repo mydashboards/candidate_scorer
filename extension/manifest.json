@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Alex Candidate Scorer",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Fast local LinkedIn candidate scoring with Ollama.",
-  "permissions": ["sidePanel", "activeTab", "scripting"],
+  "permissions": ["sidePanel", "activeTab", "scripting", "tabs"],
   "host_permissions": [
     "https://www.linkedin.com/*",
     "http://127.0.0.1:3847/*",
