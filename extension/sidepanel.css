@@ -1,0 +1,56 @@
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  margin: 0;
+  background: #fafafa;
+  color: #111;
+}
+
+main { padding: 16px; }
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+h1 { font-size: 18px; margin: 0; }
+p { margin: 4px 0 0; color: #666; font-size: 12px; }
+
+button {
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.status { margin-top: 16px; font-size: 13px; color: #555; }
+.hidden { display: none; }
+
+.scoreRow {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 14px;
+  align-items: start;
+  margin: 18px 0;
+}
+
+.score { font-size: 42px; font-weight: 800; line-height: 1; }
+.decision { font-weight: 800; font-size: 16px; }
+.summary { margin-top: 6px; font-size: 13px; color: #444; }
+
+.criterion {
+  border-top: 1px solid #ddd;
+  padding: 12px 0;
+}
+
+.criterionTop {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.evidence { margin-top: 5px; font-size: 12px; color: #666; }
