@@ -5,9 +5,9 @@ from typing import Literal
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
-app = FastAPI(title="Alex Candidate Scorer", version="1.4.0")
+app = FastAPI(title="Alex Candidate Scorer", version="2.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["POST", "GET"], allow_headers=["*"])
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
 OLLAMA_MODEL = "qwen3:4b"
@@ -27,194 +27,142 @@ class Criterion(BaseModel):
     evidence: str
 
 class ScoreResult(BaseModel):
-    score: int = Field(ge=0, le=100)
+    score: int
     decision: Literal["STRONG OUTREACH", "OUTREACH", "REVIEW", "SKIP"]
     summary: str
     criteria: list[Criterion]
 
-CRITERIA = [
-    {"key": "cpp_depth", "label": "C++ professional experience", "max_points": 40},
-    {"key": "application_logic", "label": "Application / business logic", "max_points": 25},
-    {"key": "architecture", "label": "Architecture / software design", "max_points": 10},
-    {"key": "egym_fit", "label": "EGYM product-software fit", "max_points": 15},
-    {"key": "qt_qml", "label": "Qt / QML", "max_points": 5},
-    {"key": "cmake", "label": "CMake", "max_points": 5},
-]
-STATUS_MULTIPLIER = {"met": 1.0, "partial": 0.5, "not_met": 0.0, "unknown": 0.0}
+STUDENT = ("intern", "internship", "working student", "werkstudent", "student assistant", "student research", "thesis")
+LOW = ("autosar", " ecu", "ecu ", "firmware", "microcontroller", "device controller", "bsp", "kernel driver", "device driver", "register-level", "hardware abstraction", "can bus", "lin bus")
+APP = ("application", "business logic", "domain logic", "product software", "desktop", "workflow", "feature development", "user interface", "gui", "hmi", "backend", "api", "service")
+ARCH = ("architecture", "architectural", "design pattern", "domain-driven", "ddd", "refactor", "legacy", "component design", "module design", "software design")
+EGYM = ("medical device", "robotics", "robotic", "industrial", "machine", "instrumentation", "device software", "product software", "large codebase", "complex software", "production software")
 
-SYSTEM_PROMPT = """You are an evidence-based sourcing assistant for a Senior C++ Software Engineer role at EGYM. Evaluate PROFESSIONAL EXPERIENCE, especially job descriptions. Use only explicit evidence.
 
-ROLE CONTEXT — WHAT EGYM NEEDS
-The engineer will work on the large, long-lived C++ software platform running EGYM fitness machines. This is not a small firmware-only controller role. The software combines physical fitness hardware with substantial application/product software and complex business/domain logic. Engineers build features, maintain and evolve a large codebase, design architecture, test and deploy software, and collaborate with sports science, electrical engineering and SRE.
+def hits(text, terms):
+    low = text.lower()
+    return [x for x in terms if x in low]
 
-Think of the ideal transferable background as: C++ product/application engineering for a complex real-world system, ideally software that interacts with hardware/devices while still containing a substantial high-level application layer, domain/business logic, architecture and many product features.
 
-1) PROFESSIONAL C++ EXPERIENCE — HARD MINIMUM
-At least 3 years substantial hands-on C++ in regular professional employment. Target 3-5+ years.
-MET = profile supports >=3 qualifying professional C++ years.
-PARTIAL = some professional C++, but <3 years or insufficient evidence for 3 years.
-NOT_MET = no meaningful professional hands-on C++.
-UNKNOWN = duration cannot be determined.
-Internships, Werkstudent/working-student roles, student jobs, thesis, university projects and student research count as ZERO years.
-Do not mark MET from seniority, a skill list, company or title alone.
+def keyword_status(found, strong=2):
+    if len(found) >= strong:
+        return "met"
+    if found:
+        return "partial"
+    return "unknown"
 
-2) APPLICATION / BUSINESS LOGIC — HARD REQUIREMENT
-Ask: WHAT did the person build with C++?
-Strong signals: application/product software, business/domain logic, complex product features, workflows, state management, data processing, APIs/services, desktop/GUI applications, application-layer modules, substantial legacy-application modernization, or ownership of a complex application.
-MET = clear substantial hands-on application/business/domain-logic development.
-PARTIAL = some high-level evidence but mixed/weak/unclear.
-NOT_MET = clearly essentially low-level only.
-UNKNOWN = job descriptions do not reveal the layer.
-Qt/QML can support this but is not required.
 
-3) ARCHITECTURE / SOFTWARE DESIGN
-Positive evidence: software architecture, component/module design, system decomposition, interfaces/APIs, design patterns, DDD, maintainable structures, large refactorings, legacy modernization, technical design decisions, ownership of large software components.
-MET = explicit strong architecture/design ownership.
-PARTIAL = some design/refactoring/component ownership.
-UNKNOWN = not described.
+def criterion(key, label, status, max_points, evidence):
+    mult = {"met": 1, "partial": .5, "not_met": 0, "unknown": 0}[status]
+    return Criterion(key=key, label=label, status=status, points=round(max_points * mult), max_points=max_points, evidence=evidence[:160])
 
-4) EGYM PRODUCT-SOFTWARE FIT
-Estimate how transferable the candidate's PROFESSIONAL SOFTWARE EXPERIENCE is to EGYM's fitness-machine software. Do NOT judge personality or culture fit.
 
-Strong EGYM-fit signals include combinations of:
-- large or long-lived C++ application/product codebases
-- complex business/domain logic
-- many interconnected product features
-- application software interacting with physical devices/hardware
-- desktop/HMI/GUI software controlling or configuring complex products
-- medical devices, robotics, industrial machines, instrumentation, smart devices or similar physical products IF the work includes a substantial high-level application layer
-- architecture of complex C++ systems
-- modernization/refactoring of large legacy applications
-- reliability, testing, deployment and maintainability of production software
-- cross-functional development with hardware/electrical/domain experts
-- ownership across feature development rather than isolated low-level components
+def fast_signals(text):
+    t = text.lower()
+    return {
+        "cpp": hits(t, ("c++", "modern c++", "cpp")),
+        "student": hits(t, STUDENT),
+        "low": hits(t, LOW),
+        "app": hits(t, APP),
+        "arch": hits(t, ARCH),
+        "egym": hits(t, EGYM),
+        "qt": hits(t, ("qt", "qml")),
+        "cmake": hits(t, ("cmake",)),
+    }
 
-MET = background is strongly transferable to a large, business-logic-heavy C++ product running on connected physical fitness machines.
-PARTIAL = some transferable signals, but scale/product/application depth is unclear or only partly comparable.
-NOT_MET = professional background is clearly dominated by work unlike EGYM's application/product layer, especially isolated low-level controller/firmware work.
-UNKNOWN = profile does not provide enough detail. Do NOT invent large-scale experience merely because the employer is large.
-
-IMPORTANT: 'large scale' here means a substantial/complex/long-lived software product or codebase with many features/components and domain logic. It does NOT require web-scale traffic, distributed cloud systems or millions of requests.
-
-5) LOW-LEVEL DOMINANCE — HARD SKIP CHECK
-Strong low-level signals: ECU, AUTOSAR ECU, device controllers, firmware, microcontrollers, BSP, drivers, register-level work, hardware abstraction, sensor/actuator control, low-level hardware control, CAN/LIN when this is the core job.
-Do not hard-skip merely because someone has embedded/device/hardware experience. Hardware-adjacent C++ can be highly relevant to EGYM if there is a substantial application/product layer.
-Hard skip ONLY when low-level ECU/device-controller/firmware work is dominant AND there is no strong application/business-logic depth.
-
-Examples:
-- C++/Qt application for a medical/industrial device, complex workflows and architecture => STRONG EGYM fit.
-- Large C++ desktop/product application with complex domain logic but no hardware => GOOD EGYM fit.
-- Robotics software with high-level application/behavior/domain logic and architecture => GOOD EGYM fit.
-- AUTOSAR ECU components, drivers and CAN/hardware abstraction only => POOR EGYM fit / likely SKIP.
-- 'C++ software for devices' without details => UNKNOWN/REVIEW, not automatic skip.
-
-6) NICE TO HAVE ONLY
-Qt/QML and CMake. Missing them is not a reason to reject a strong C++ application candidate.
-
-DECISION RULES
-- <3 years qualifying professional C++ => never OUTREACH.
-- >=3 years C++ + strong application/business logic + strong EGYM transferability => STRONG OUTREACH.
-- >=3 years C++ + strong application/business logic + reasonable/partial EGYM transferability => OUTREACH.
-- >=3 years C++ + application layer or EGYM transferability unclear => REVIEW.
-- predominantly low-level ECU/device-controller/firmware with no strong application depth => SKIP.
-
-Missing information = unknown. Never invent evidence. Ignore protected/personal characteristics and personality/culture fit. Keep evidence very short. Summary under 25 words and explain whether the person's experience transfers to EGYM fitness-machine software.
-
-Return JSON only:
-{"summary":"...","hard_skip":false,"hard_skip_reason":"","criteria":[{"key":"cpp_depth","status":"met|partial|not_met|unknown","evidence":"..."},{"key":"application_logic","status":"met|partial|not_met|unknown","evidence":"..."},{"key":"architecture","status":"met|partial|not_met|unknown","evidence":"..."},{"key":"egym_fit","status":"met|partial|not_met|unknown","evidence":"..."},{"key":"qt_qml","status":"met|partial|not_met|unknown","evidence":"..."},{"key":"cmake","status":"met|partial|not_met|unknown","evidence":"..."}]}
+AI_PROMPT = """Assess ONLY the supplied professional-experience text for an EGYM C++ engineer.
+EGYM software is a large, long-lived C++ product running fitness machines: substantial application/business/domain logic, many features/components, architecture, production quality, often hardware-adjacent but NOT firmware-only.
+Internships/Werkstudent/student roles do NOT count toward required C++ years.
+Need >=3 years regular professional hands-on C++.
+Low-level-only ECU/AUTOSAR/firmware/controller/driver profiles are poor fit.
+Hardware-adjacent application/product software is GOOD fit.
+Large-scale means complex/long-lived codebase, NOT web traffic.
+Return compact JSON only with single-letter values M=met,P=partial,U=unknown,N=not_met:
+{"c":"M|P|U|N","a":"M|P|U|N","r":"M|P|U|N","e":"M|P|U|N","l":false,"s":"max 12 words"}
+c=C++ >=3 qualifying professional years; a=application/business logic; r=architecture/design; e=EGYM product-software transferability; l=true only if predominantly low-level with no strong app layer.
 """
 
-def _clean_json_text(text: str) -> str:
-    text = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.IGNORECASE)
-    text = re.sub(r"\s*```$", "", text)
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end <= start:
-        raise ValueError("The local model did not return valid JSON.")
-    return text[start:end + 1]
+MAP = {"M":"met", "P":"partial", "U":"unknown", "N":"not_met"}
 
-def _normalise_result(payload: dict) -> ScoreResult:
-    incoming = {item.get("key"): item for item in payload.get("criteria", [])}
-    criteria = []
-    for definition in CRITERIA:
-        raw = incoming.get(definition["key"], {})
-        status = raw.get("status", "unknown")
-        if status not in STATUS_MULTIPLIER:
-            status = "unknown"
-        max_points = definition["max_points"]
-        points = round(max_points * STATUS_MULTIPLIER[status])
-        evidence = str(raw.get("evidence", "")).strip() or "Not visible in profile."
-        criteria.append(Criterion(key=definition["key"], label=definition["label"], status=status, points=points, max_points=max_points, evidence=evidence[:180]))
 
-    by_key = {item.key: item for item in criteria}
-    score = sum(item.points for item in criteria)
-
-    if payload.get("hard_skip") is True:
-        decision = "SKIP"
-        score = min(score, 49)
-        summary = str(payload.get("hard_skip_reason", "")).strip() or "Predominantly low-level ECU/device-controller/firmware profile."
-    else:
-        cpp = by_key["cpp_depth"].status
-        application = by_key["application_logic"].status
-        architecture = by_key["architecture"].status
-        egym = by_key["egym_fit"].status
-
-        if cpp == "not_met":
-            score = min(score, 39)
-            decision = "SKIP"
-        elif cpp in ("partial", "unknown"):
-            score = min(score, 64)
-            decision = "REVIEW"
-        elif application == "not_met":
-            score = min(score, 49)
-            decision = "SKIP"
-        elif application == "unknown" or egym == "unknown":
-            score = min(score, 69)
-            decision = "REVIEW"
-        elif application == "partial" and architecture not in ("met", "partial"):
-            score = min(score, 69)
-            decision = "REVIEW"
-        elif application == "met" and egym == "met":
-            decision = "STRONG OUTREACH" if score >= 85 else "OUTREACH"
-        elif application == "met" and egym == "partial":
-            decision = "OUTREACH"
-        elif application == "partial" and architecture == "met" and egym in ("met", "partial"):
-            decision = "OUTREACH"
-        else:
-            decision = "REVIEW"
-
-        summary = str(payload.get("summary", "")).strip() or "Assessment based on transferability to EGYM fitness-machine product software."
-
-    return ScoreResult(score=score, decision=decision, summary=summary[:200], criteria=criteria)
-
-@app.get("/health")
-def health():
-    return {"ok": True, "model": OLLAMA_MODEL}
-
-@app.post("/analyze", response_model=ScoreResult)
-def analyze(profile: Profile):
-    request_body = {
+def ai_assess(text):
+    # Send only a compact slice of Experience, not the whole LinkedIn page.
+    compact = re.sub(r"\s+", " ", text)[:6500]
+    body = {
         "model": OLLAMA_MODEL,
         "keep_alive": "60m",
         "stream": False,
         "think": False,
         "format": "json",
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": "Evaluate professional experience for transferability to EGYM fitness-machine software: C++ duration, application/business logic, architecture, complex product/codebase experience, hardware-adjacent product software, and low-level dominance.\n\n" + profile.visibleProfileText},
-        ],
-        "options": {"temperature": 0, "num_ctx": 3072, "num_predict": 380},
+        "messages": [{"role":"system","content":AI_PROMPT},{"role":"user","content":compact}],
+        "options": {"temperature":0, "num_ctx":2048, "num_predict":90},
     }
+    with httpx.Client(timeout=30.0) as client:
+        r = client.post(OLLAMA_URL, json=body)
+        r.raise_for_status()
+    raw = r.json().get("message",{}).get("content","").strip()
+    start, end = raw.find("{"), raw.rfind("}")
+    return json.loads(raw[start:end+1])
+
+
+def build_result(ai, sig):
+    def st(k): return MAP.get(str(ai.get(k,"U")).upper(), "unknown")
+    cpp, app, arch, egym = st("c"), st("a"), st("r"), st("e")
+    qt = "met" if sig["qt"] else "unknown"
+    cmake = "met" if sig["cmake"] else "unknown"
+
+    criteria = [
+        criterion("cpp_depth", "C++ professional experience", cpp, 40, "AI checks >=3 professional years; student roles excluded."),
+        criterion("application_logic", "Application / business logic", app, 25, ", ".join(sig["app"][:4]) or "Semantic assessment of job descriptions."),
+        criterion("architecture", "Architecture / software design", arch, 10, ", ".join(sig["arch"][:4]) or "Semantic assessment of job descriptions."),
+        criterion("egym_fit", "EGYM product-software fit", egym, 15, ", ".join(sig["egym"][:4]) or "Transferability assessed from job descriptions."),
+        criterion("qt_qml", "Qt / QML", qt, 5, ", ".join(sig["qt"]) or "Not visible."),
+        criterion("cmake", "CMake", cmake, 5, ", ".join(sig["cmake"]) or "Not visible."),
+    ]
+    score = sum(x.points for x in criteria)
+
+    if ai.get("l") is True:
+        return ScoreResult(score=min(score,49), decision="SKIP", summary=str(ai.get("s") or "Low-level profile dominates."), criteria=criteria)
+    if cpp == "not_met":
+        return ScoreResult(score=min(score,39), decision="SKIP", summary=str(ai.get("s") or "Insufficient professional C++."), criteria=criteria)
+    if cpp in ("partial","unknown"):
+        return ScoreResult(score=min(score,64), decision="REVIEW", summary=str(ai.get("s") or "3+ professional C++ years unclear."), criteria=criteria)
+    if app == "not_met":
+        return ScoreResult(score=min(score,49), decision="SKIP", summary=str(ai.get("s") or "Application/business logic missing."), criteria=criteria)
+    if app == "unknown" or egym == "unknown":
+        return ScoreResult(score=min(score,69), decision="REVIEW", summary=str(ai.get("s") or "Application or EGYM fit unclear."), criteria=criteria)
+    if app == "met" and egym == "met":
+        decision = "STRONG OUTREACH" if score >= 85 else "OUTREACH"
+    elif app == "met" and egym == "partial":
+        decision = "OUTREACH"
+    elif app == "partial" and arch == "met" and egym in ("met","partial"):
+        decision = "OUTREACH"
+    else:
+        decision = "REVIEW"
+    return ScoreResult(score=score, decision=decision, summary=str(ai.get("s") or "Transferability assessed from professional experience."), criteria=criteria)
+
+@app.get("/health")
+def health(): return {"ok":True,"model":OLLAMA_MODEL,"mode":"fast-hybrid"}
+
+@app.post("/analyze", response_model=ScoreResult)
+def analyze(profile: Profile):
+    sig = fast_signals(profile.visibleProfileText)
+
+    # Instant deterministic rejection when no C++ signal exists at all.
+    if not sig["cpp"]:
+        criteria = [
+            criterion("cpp_depth","C++ professional experience","not_met",40,"No C++ evidence in extracted experience."),
+            criterion("application_logic","Application / business logic",keyword_status(sig["app"]),25,", ".join(sig["app"][:4]) or "Not visible."),
+            criterion("architecture","Architecture / software design",keyword_status(sig["arch"]),10,", ".join(sig["arch"][:4]) or "Not visible."),
+            criterion("egym_fit","EGYM product-software fit",keyword_status(sig["egym"]),15,", ".join(sig["egym"][:4]) or "Not visible."),
+            criterion("qt_qml","Qt / QML","met" if sig["qt"] else "unknown",5,", ".join(sig["qt"]) or "Not visible."),
+            criterion("cmake","CMake","met" if sig["cmake"] else "unknown",5,", ".join(sig["cmake"]) or "Not visible."),
+        ]
+        return ScoreResult(score=min(sum(x.points for x in criteria),39), decision="SKIP", summary="No professional C++ evidence found.", criteria=criteria)
+
     try:
-        with httpx.Client(timeout=90.0) as client:
-            response = client.post(OLLAMA_URL, json=request_body)
-            response.raise_for_status()
-        content = response.json().get("message", {}).get("content", "")
-        return _normalise_result(json.loads(_clean_json_text(content)))
+        return build_result(ai_assess(profile.visibleProfileText), sig)
     except httpx.ConnectError as exc:
-        raise HTTPException(503, "Ollama is not reachable. Open Ollama and make sure qwen3:4b is installed.") from exc
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(502, f"Ollama error: {exc.response.text[:500]}") from exc
-    except (json.JSONDecodeError, ValueError, ValidationError) as exc:
-        raise HTTPException(502, f"Could not read the model response: {exc}") from exc
+        raise HTTPException(503,"Ollama is not reachable.") from exc
     except Exception as exc:
-        raise HTTPException(500, f"Analysis failed: {exc}") from exc
+        raise HTTPException(502,f"Fast analysis failed: {exc}") from exc
