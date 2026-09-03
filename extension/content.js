@@ -10,35 +10,27 @@ function findExperienceSection() {
   });
 
   if (!target) return null;
-
   return target.closest("section") || target.closest("div[data-view-name]") || target.parentElement?.parentElement || null;
 }
 
 function isExpandButton(button) {
   const text = clean(button.innerText || button.getAttribute("aria-label") || "").toLowerCase();
   if (!text) return false;
-
   const positive = ["see more", "show more", "mehr anzeigen", "mehr sehen", "weitere anzeigen"];
   const negative = ["show all", "see all", "alle anzeigen", "all activity", "all skills"];
-
   return positive.some(term => text.includes(term)) && !negative.some(term => text.includes(term));
 }
 
 async function expandExperienceText() {
   const experience = findExperienceSection();
   if (!experience) return;
-
   const buttons = Array.from(experience.querySelectorAll("button"))
     .filter(button => !button.disabled && isExpandButton(button))
     .slice(0, 30);
-
   for (const button of buttons) {
     try { button.click(); } catch (_) {}
   }
-
-  if (buttons.length) {
-    await new Promise(resolve => setTimeout(resolve, 160));
-  }
+  if (buttons.length) await new Promise(resolve => setTimeout(resolve, 160));
 }
 
 function getHeaderContext() {
@@ -50,28 +42,28 @@ function getHeaderContext() {
 function getExperienceText() {
   const experience = findExperienceSection();
   if (experience) {
-    return clean(experience.innerText).slice(0, 8500);
+    // Keep EVERYTHING inside Experience, including each job's own "Skills:" line.
+    // Those job-level skills are important evidence for which technology was used in that role.
+    return clean(experience.innerText).slice(0, 10000);
   }
 
-  // Fallback for LinkedIn layouts where the Experience section cannot be located reliably.
   const body = clean(document.body.innerText);
   const lower = body.toLowerCase();
   const starts = [lower.indexOf("experience"), lower.indexOf("berufserfahrung")].filter(i => i >= 0);
   if (starts.length) {
     const start = Math.min(...starts);
-    return body.slice(start, start + 8500);
+    return body.slice(start, start + 10000);
   }
-
-  return body.slice(0, 8500);
+  return body.slice(0, 10000);
 }
 
 async function extractProfile() {
-  // The scorer is deliberately Experience-first. Skills and unrelated profile sections are not needed.
+  // Experience-first: job descriptions AND the Skills lines attached to those jobs are included.
+  // The separate global Skills section at the bottom of the LinkedIn profile is intentionally ignored.
   await expandExperienceText();
-
   const header = getHeaderContext();
   const experience = getExperienceText();
-  const text = `PROFILE HEADER:\n${header}\n\nPROFESSIONAL EXPERIENCE:\n${experience}`;
+  const text = `PROFILE HEADER:\n${header}\n\nPROFESSIONAL EXPERIENCE (INCLUDING SKILLS ATTACHED TO EACH JOB):\n${experience}`;
 
   const title = document.title
     .replace(/\s*\|\s*LinkedIn.*$/i, "")
