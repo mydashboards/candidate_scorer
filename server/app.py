@@ -7,9 +7,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, ValidationError
 
-app = FastAPI(title="Alex Candidate Scorer", version="1.2.0")
+app = FastAPI(title="Alex Candidate Scorer", version="1.3.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["POST", "GET"], allow_headers=["*"])
-
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
 OLLAMA_MODEL = "qwen3:4b"
 
@@ -34,51 +33,63 @@ class ScoreResult(BaseModel):
     criteria: list[Criterion]
 
 CRITERIA = [
-    {"key": "cpp_depth", "label": "C++ professional experience", "max_points": 50},
-    {"key": "application_layer", "label": "Application / business logic depth", "max_points": 40},
+    {"key": "cpp_depth", "label": "C++ professional experience", "max_points": 45},
+    {"key": "application_logic", "label": "Application / business logic", "max_points": 30},
+    {"key": "architecture", "label": "Architecture / software design", "max_points": 15},
     {"key": "qt_qml", "label": "Qt / QML", "max_points": 5},
     {"key": "cmake", "label": "CMake", "max_points": 5},
 ]
 STATUS_MULTIPLIER = {"met": 1.0, "partial": 0.5, "not_met": 0.0, "unknown": 0.0}
 
-SYSTEM_PROMPT = """You are an evidence-based sourcing assistant for a Senior C++ Software Engineer role at EGYM. Use only explicit profile evidence.
+SYSTEM_PROMPT = """You are an evidence-based sourcing assistant for a Senior C++ Software Engineer role at EGYM. Evaluate PROFESSIONAL EXPERIENCE, especially job descriptions. Use only explicit evidence.
 
-HARD REQUIREMENT 1 — PROFESSIONAL C++ EXPERIENCE
-The candidate needs AT LEAST 3 years of substantial hands-on C++ in regular professional software-engineering employment. The target range is 3-5+ years.
+1) PROFESSIONAL C++ EXPERIENCE — HARD MINIMUM
+At least 3 years substantial hands-on C++ in regular professional employment. Target 3-5+ years.
+MET = profile supports >=3 qualifying professional C++ years.
+PARTIAL = some professional C++, but <3 years or insufficient evidence for 3 years.
+NOT_MET = no meaningful professional hands-on C++.
+UNKNOWN = duration cannot be determined.
+Do not mark MET merely from seniority, a skill list, or company/title.
+Internships, Werkstudent/working-student roles, student jobs, thesis, university projects and student research count as ZERO years.
 
-This is a hard minimum:
-- MET = at least 3 qualifying professional years of substantial hands-on C++ are explicitly supported by the profile.
-- PARTIAL = some qualifying professional C++ exists, but it is less than 3 years OR the profile does not provide enough evidence to establish at least 3 years.
-- NOT_MET = no meaningful qualifying professional hands-on C++.
-- UNKNOWN = professional C++ duration cannot be determined.
+2) APPLICATION / BUSINESS LOGIC — HARD REQUIREMENT
+Ask: WHAT did the person build with C++?
+Strong HIGH-LEVEL positive evidence includes application software, desktop/product software, business logic, domain logic, product features, workflows, state management, data processing, APIs/services, GUI applications, complex user-facing or domain-facing functionality, application-layer modules, or ownership/refactoring of a substantial application.
+MET = clear substantial hands-on application/business/domain-logic development.
+PARTIAL = some high-level evidence but mixed/weak/unclear.
+NOT_MET = evidence clearly shows work is essentially low-level only.
+UNKNOWN = job descriptions do not reveal the development layer.
+Qt/QML can support application-level evidence but is NOT required.
 
-Do NOT mark C++ as MET merely because the candidate is senior, has a C++ skill listed, or has multiple software roles. There must be evidence supporting at least 3 years of qualifying professional C++.
+3) ARCHITECTURE / SOFTWARE DESIGN — SUPPORTING SIGNAL
+Positive evidence: software architecture, architectural design, component/module design, system decomposition, interfaces/APIs, design patterns, DDD, maintainable application structure, major refactoring/reworking of legacy applications, technical design decisions, ownership of larger software components.
+MET = explicit strong architecture/design ownership.
+PARTIAL = some design/refactoring/component ownership.
+UNKNOWN = not described. Architecture is valuable but not mandatory if application/business-logic evidence is already strong.
 
-EXPERIENCE COUNTING RULE
-Internships, working-student/Werkstudent roles, student jobs, thesis work, university projects, student research and similar student experience count as ZERO years toward the 3-year minimum. They may show skill exposure only.
-Count regular professional employment such as Software Engineer, Developer, Senior Engineer, etc.
+4) LOW-LEVEL DOMINANCE — HARD SKIP CHECK
+Strong low-level signals: ECU development, AUTOSAR ECU, device controllers, firmware, microcontrollers, BSP, drivers, register-level work, hardware abstraction, sensor/actuator control, low-level hardware control, CAN/LIN work when this is the core job.
+Do NOT hard-skip merely because a candidate has embedded experience, works with hardware, or develops software for devices.
+Hard skip ONLY when low-level ECU/device-controller/firmware work is the dominant professional profile AND there is no strong application/business-logic depth.
+Examples:
+- 'C++ software for medical devices' alone => UNKNOWN application layer, not automatic skip.
+- 'C++/Qt desktop application for configuring medical devices; application architecture and workflows' => strong application signal.
+- 'AUTOSAR ECU components, CAN communication, hardware abstraction' => strong low-level signal.
 
-HARD REQUIREMENT 2 — HIGH-LEVEL / APPLICATION DEVELOPMENT
-Candidate should have hands-on application/business-logic-heavy development. Positive evidence: application development, business/domain logic, desktop/GUI/product software, software architecture, feature development, design patterns, DDD.
-MET = clear application/business-logic-heavy work.
-PARTIAL = mixed low/high-level work or weak evidence.
+5) NICE TO HAVE ONLY
+Qt/QML and CMake. Missing them is not a reason to reject or substantially downgrade a strong C++ application candidate.
 
-HARD SKIP
-Skip when the main profile is ECU, device-controller, microcontroller, AUTOSAR ECU, BSP/driver-heavy, low-level hardware control or firmware-only work AND there is no strong application/business-logic depth. Do not skip merely for some embedded experience.
+DECISION RULES
+- <3 years qualifying professional C++ => never OUTREACH.
+- >=3 years C++ + strong application/business logic => OUTREACH; architecture can strengthen to STRONG OUTREACH.
+- >=3 years C++ + application layer unclear => REVIEW.
+- >=3 years C++ + strong architecture plus credible high-level application evidence => OUTREACH.
+- predominantly low-level ECU/device-controller/firmware with no strong application depth => SKIP.
 
-NICE TO HAVE ONLY
-Qt/QML and CMake. Missing either is not a reason to skip.
-
-DECISION
-- Less than 3 years qualifying professional C++ => cannot be OUTREACH.
-- At least 3 years C++ + strong application/business logic => OUTREACH / STRONG OUTREACH.
-- At least 3 years C++ + unclear application layer => REVIEW.
-- Predominantly ECU/device-controller/firmware => SKIP.
-
-Missing info = unknown. Do not infer skills from company names. Ignore protected/personal characteristics. Keep evidence very short. Summary under 25 words.
+Missing information = unknown, never invent evidence. Ignore protected/personal characteristics. Keep each evidence sentence very short. Summary under 25 words.
 
 Return JSON only:
-{"summary":"...","hard_skip":false,"hard_skip_reason":"","criteria":[{"key":"cpp_depth","status":"met|partial|not_met|unknown","evidence":"..."},{"key":"application_layer","status":"met|partial|not_met|unknown","evidence":"..."},{"key":"qt_qml","status":"met|partial|not_met|unknown","evidence":"..."},{"key":"cmake","status":"met|partial|not_met|unknown","evidence":"..."}]}
+{"summary":"...","hard_skip":false,"hard_skip_reason":"","criteria":[{"key":"cpp_depth","status":"met|partial|not_met|unknown","evidence":"..."},{"key":"application_logic","status":"met|partial|not_met|unknown","evidence":"..."},{"key":"architecture","status":"met|partial|not_met|unknown","evidence":"..."},{"key":"qt_qml","status":"met|partial|not_met|unknown","evidence":"..."},{"key":"cmake","status":"met|partial|not_met|unknown","evidence":"..."}]}
 """
 
 def _clean_json_text(text: str) -> str:
@@ -110,26 +121,31 @@ def _normalise_result(payload: dict) -> ScoreResult:
         score = min(score, 49)
         summary = str(payload.get("hard_skip_reason", "")).strip() or "Predominantly low-level ECU/device-controller/firmware profile."
     else:
-        cpp_status = by_key["cpp_depth"].status
-        app_status = by_key["application_layer"].status
+        cpp = by_key["cpp_depth"].status
+        application = by_key["application_logic"].status
+        architecture = by_key["architecture"].status
 
-        # The 3-year professional C++ minimum is a hard gate.
-        if cpp_status == "not_met":
+        if cpp == "not_met":
             score = min(score, 39)
             decision = "SKIP"
-        elif cpp_status in ("partial", "unknown"):
+        elif cpp in ("partial", "unknown"):
             score = min(score, 64)
             decision = "REVIEW"
-        elif app_status == "not_met":
+        elif application == "not_met":
             score = min(score, 49)
             decision = "SKIP"
-        elif app_status in ("partial", "unknown"):
+        elif application == "unknown":
             score = min(score, 69)
             decision = "REVIEW"
-        elif score >= 90:
-            decision = "STRONG OUTREACH"
-        else:
+        elif application == "partial" and architecture not in ("met", "partial"):
+            score = min(score, 69)
+            decision = "REVIEW"
+        elif application == "met":
+            decision = "STRONG OUTREACH" if score >= 90 else "OUTREACH"
+        elif application == "partial" and architecture == "met":
             decision = "OUTREACH"
+        else:
+            decision = "REVIEW"
 
         summary = str(payload.get("summary", "")).strip() or "Assessment based on professional experience shown on LinkedIn."
 
@@ -149,9 +165,9 @@ def analyze(profile: Profile):
         "format": "json",
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": "Evaluate this profile. Focus on PROFESSIONAL EXPERIENCE.\n\n" + profile.visibleProfileText},
+            {"role": "user", "content": "Evaluate the professional experience. Determine C++ duration, what they build, application/business logic, architecture, and low-level dominance.\n\n" + profile.visibleProfileText},
         ],
-        "options": {"temperature": 0, "num_ctx": 3072, "num_predict": 300},
+        "options": {"temperature": 0, "num_ctx": 3072, "num_predict": 340},
     }
     try:
         with httpx.Client(timeout=90.0) as client:
