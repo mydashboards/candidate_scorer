@@ -3,25 +3,39 @@ function clean(text) {
 }
 
 function getProfileText() {
-  const main = document.querySelector("main") || document.body;
-  const body = clean(main.innerText || document.body.innerText || "");
-  const lower = body.toLowerCase();
+  const root = document.querySelector("main") || document.body;
+  const raw = root.innerText || document.body.innerText || "";
+  const lines = raw.split("\n").map(line => line.trim()).filter(Boolean);
 
-  // Keep some profile header/About context, then take the Experience block directly
-  // from the page text. This is faster and more robust than depending on LinkedIn's DOM nesting.
-  const header = body.slice(0, 2600);
-  const markers = ["experience", "berufserfahrung"];
-  const starts = markers.map(m => lower.indexOf(m)).filter(i => i >= 0);
+  const experienceIndex = lines.findIndex(line => {
+    const t = line.toLowerCase();
+    return t === "experience" || t === "berufserfahrung";
+  });
 
-  let experience = "";
-  if (starts.length) {
-    const start = Math.min(...starts);
-    experience = body.slice(start, start + 12000);
-  } else {
-    experience = body.slice(0, 12000);
+  // Include the complete candidate profile from the top: headline, About/Summary,
+  // Top Skills, Experience, job descriptions and Skills attached to individual jobs.
+  // Stop only at the separate global Skills section near the bottom.
+  let stopIndex = lines.length;
+  if (experienceIndex >= 0) {
+    for (let i = experienceIndex + 1; i < lines.length; i++) {
+      const t = lines[i].toLowerCase();
+      const isGlobalSkillsHeading = t === "skills" || t === "kenntnisse" || t === "fähigkeiten";
+      if (isGlobalSkillsHeading) {
+        stopIndex = i;
+        break;
+      }
+    }
   }
 
-  return `PROFILE HEADER / ABOUT:\n${header}\n\nEXPERIENCE:\n${experience}`;
+  // Avoid Recruiter sidebar/recommendation text becoming candidate evidence.
+  const profileLines = lines.slice(0, stopIndex).filter(line => {
+    const t = line.toLowerCase();
+    return t !== "similar profiles" &&
+      t !== "recruiting tools" &&
+      t !== "save to pipeline";
+  });
+
+  return clean(profileLines.join("\n")).slice(0, 20000);
 }
 
 async function extractProfile() {
